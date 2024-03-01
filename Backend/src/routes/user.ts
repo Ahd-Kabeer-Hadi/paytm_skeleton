@@ -8,6 +8,7 @@ import {
 import { Account, User } from "../lib/db";
 import Jwt from "jsonwebtoken";
 import { AuthMiddleWare } from "./middleware";
+import { Types } from "mongoose";
 const UserRouter = Router();
 
 UserRouter.post("/signup", async (req: Request, res: Response) => {
@@ -45,7 +46,7 @@ UserRouter.post("/signup", async (req: Request, res: Response) => {
   const token = Jwt.sign({ userId }, JWT_SECRET);
   return res.json({
     token,
-    message: "User created successfully",
+        message: "User created successfully",
   });
 });
 
@@ -71,8 +72,43 @@ UserRouter.post("/signin", async (req: Request, res: Response) => {
 
   return res.json({
     token,
+    userId,
     message: "logged in successful",
   });
+});
+
+UserRouter.get("/me", AuthMiddleWare, async (req: Request, res: Response) => {
+  try {
+    const currentUser = await User.aggregate([
+      { $match: { _id: new Types.ObjectId(req.userId) } },
+      {
+        $lookup: {
+          from: "accounts",
+          localField: "_id",
+          foreignField: "userId",
+          as: "account",
+        },
+      },
+      {
+        $unwind: "$account",
+      },
+      { $project: {
+        _id: 1,
+        username: 1,
+        firstName: 1,
+        lastName: 1,
+        balance : '$account.balance'
+      } },
+    ]);
+    // await User.findById({ _id: req.userId }, { _id: true });
+    if (currentUser) {
+      return res.json({
+        currentUser: currentUser[0],
+      });
+    }
+  } catch (error) {
+    res.send(500).json({ message: "signin/signup and try again", error });
+  }
 });
 
 UserRouter.put("/", AuthMiddleWare, async (req: Request, res: Response) => {
@@ -99,29 +135,35 @@ UserRouter.put("/", AuthMiddleWare, async (req: Request, res: Response) => {
   }
 });
 
-UserRouter.get("/bulk", async (req: Request, res: Response) => {
+UserRouter.get("/bulk", AuthMiddleWare, async (req: Request, res: Response) => {
   const filter = req.query.filter || "";
+  const userId = req.userId;
 
   try {
     const Users = await User.find({
-      $or: [
+      $and: [
         {
-          firstName: {
-            $regex: filter,
-          },
+          $or: [
+            {
+              firstName: {
+                $regex: filter,
+              },
+            },
+            {
+              lastName: {
+                $regex: filter,
+              },
+            },
+          ],
         },
-        {
-          lastName: {
-            $regex: filter,
-          },
-        },
+        { _id: { $ne: userId } },
       ],
     });
 
     if (!Users.length) {
       return res.status(200).json({
-        message:"no user found"
-      })
+        message: "no user found",
+      });
     }
 
     res.json({
